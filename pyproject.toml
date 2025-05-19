@@ -1,0 +1,11 @@
+[project]
+name = "book-code"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.169.0",
+    "mcp>=1.9.0",
+    "openai>=1.79.0",
+]

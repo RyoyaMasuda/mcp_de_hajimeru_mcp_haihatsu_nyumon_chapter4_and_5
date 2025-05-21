@@ -32,10 +32,8 @@ FINAL_TOOL_NAME = "final_answer"  # NEW: name of the structured-output tool
 RAW_CONFIG: Dict[str, dict] = {
     "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
     "google_search": {
-        "command": "python",
-        "args": [
-            r"D:\\SozoWorks\\book_code\\servers\\src\\server_google_search.py",
-        ],
+        "command": "uv",
+        "args": ["--directory", "/path/to/your/project/servers/src", "run", "server_google_search.py"],
     },
 }
 
@@ -67,18 +65,12 @@ def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
     }
 
 
-async def init_servers(
-    stack: AsyncExitStack, servers: Dict[str, MCPServer]
-) -> List[dict]:
+async def init_servers(stack: AsyncExitStack, servers: Dict[str, MCPServer]) -> List[dict]:
     openai_tools: List[dict] = []
 
     for server in servers.values():
         read, write = await stack.enter_async_context(
-            stdio_client(
-                StdioServerParameters(
-                    command=server.command, args=server.args, env=server.env
-                )
-            )
+            stdio_client(StdioServerParameters(command=server.command, args=server.args, env=server.env))
         )
         server.session = await stack.enter_async_context(ClientSession(read, write))
         await server.session.initialize()
@@ -92,9 +84,7 @@ async def init_servers(
     return openai_tools
 
 
-async def dispatch_tool_call(
-    tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]
-) -> str:
+async def dispatch_tool_call(tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]) -> str:
     """Execute an MCP tool"""
     args = json.loads(tool_call.arguments)
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)
@@ -164,14 +154,8 @@ async def chat_loop(servers: Dict[str, MCPServer]) -> None:
 
             response: Response = client.responses.create(**call_kwargs)
 
-            output_msg = [
-                obj for obj in response.output if isinstance(obj, ResponseOutputMessage)
-            ]
-            output_func_call = [
-                obj
-                for obj in response.output
-                if isinstance(obj, ResponseFunctionToolCall)
-            ]
+            output_msg = [obj for obj in response.output if isinstance(obj, ResponseOutputMessage)]
+            output_func_call = [obj for obj in response.output if isinstance(obj, ResponseFunctionToolCall)]
             print("\n\n【First Response】")
             print(output_msg)
             print(output_func_call)

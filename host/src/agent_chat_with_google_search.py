@@ -12,6 +12,7 @@ Usage -> ``python mcp_openai_tutorial.py``
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import AsyncExitStack
 from typing import Dict, List, Optional, Any
@@ -21,16 +22,24 @@ from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 from pydantic import BaseModel
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, McpError, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import Tool
+
+# --- ロギング設定を追加 ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+# --------------------------------
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 MODEL_NAME = "gpt-4.1"
-TOOL_SEPARATOR = "__"  # unique separator to avoid name clashes across servers
+TOOL_SEPARATOR = "__"
 
 # ---------------------------------------------------------------------------
 # Raw server configuration (edit this to add/remove MCP servers)
@@ -41,7 +50,7 @@ RAW_CONFIG: Dict[str, dict] = {
     "google_search": {
         "command": "python",
         "args": [
-            r"D:\\SozoWorks\\book_code\\servers\\src\\server_google_search.py",
+            r"D:\\SozoWorks\\book_code\\servers\\src\\server_google_saaearch.py",
         ],
     },
 }
@@ -58,7 +67,7 @@ class MCPServer(BaseModel):
     command: str
     args: List[str]
     env: Optional[Dict[str, str]] = None
-    session: Any = None  # filled in at runtime
+    session: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -84,21 +93,31 @@ async def init_servers(
     openai_tools: List[dict] = []
 
     for server in servers.values():
-        read, write = await stack.enter_async_context(
-            stdio_client(
-                StdioServerParameters(
-                    command=server.command, args=server.args, env=server.env
+        try:
+            read, write = await stack.enter_async_context(
+                stdio_client(
+                    StdioServerParameters(
+                        command=server.command, args=server.args, env=server.env
+                    )
                 )
             )
-        )
-        server.session = await stack.enter_async_context(ClientSession(read, write))
-        await server.session.initialize()
+            server.session = await stack.enter_async_context(ClientSession(read, write))
 
-        response = await server.session.list_tools()
-        print(f"[{server.name}] available tools → {[t.name for t in response.tools]}")
+            await server.session.initialize()
+            response = await server.session.list_tools()
 
-        for t in response.tools:
-            openai_tools.append(mcp_tool_to_openai_tool(t, server.name))
+            logger.info(
+                f"[{server.name}] available tools → {[t.name for t in response.tools]}"
+            )
+
+            for t in response.tools:
+                openai_tools.append(mcp_tool_to_openai_tool(t, server.name))
+
+        # --- ▼ 3.4節 パターンBのエラー処理 ▼ ---
+        except McpError as e:
+            logger.error(
+                f"MCP Error on server '{server.name}': {e.error.message} (Code: {e.error.code})"
+            )
 
     return openai_tools
 
@@ -110,7 +129,19 @@ async def dispatch_tool_call(
     args = json.loads(tool_call.arguments)
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)
     session = servers[server_name].session
+
+    logger.info(f"Calling tool '{tool_name}' on server '{server_name}'")
     result = await session.call_tool(name=tool_name, arguments=args)
+
+    # --- 3.4節 パターンAのエラー処理 ---
+    if result.isError:
+        error_content = (
+            result.content[0].text if result.content else "Unknown tool error"
+        )
+        logger.warning(f"Tool '{tool_name}' returned an error: {error_content}")
+        return f"Tool Error: {error_content}"
+
+    logger.info(f"Tool '{tool_name}' executed successfully.")
     return str(result.content[0].text)
 
 

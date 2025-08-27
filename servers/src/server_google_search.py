@@ -2,12 +2,9 @@ from mcp.server.fastmcp import FastMCP, Context
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import os
+# .envファイルから環境変数を読み込む
 from dotenv import load_dotenv
-
-
 load_dotenv()  # .envファイルから環境変数を読み込み
-
-
 API_KEY = os.getenv("GOOGLE_CSE_API_KEY")  # Google Custom Search APIキー
 CX_ID = os.getenv("GOOGLE_CSE_ID")  # 検索エンジンID
 
@@ -24,21 +21,25 @@ async def google_search(query: str, ctx: Context) -> str:
         query (str): 検索クエリ
         ctx (Context): ロギング用のMCPコンテキスト
     """
-    # 入力検証
+    # 入力検証処理
+
+    # 検索クエリが空の場合、エラーを返す
     if not query or not query.strip():
         raise ValueError("検索クエリを入力してください")
 
+    # 検索クエリが長すぎる場合、エラーを返す
     if len(query) > 100:
         raise ValueError("検索クエリは100文字以内で入力してください")
 
     # API設定の確認
     if not API_KEY or not CX_ID:
         raise Exception("Google検索APIが設定されていません。環境変数を確認してください。")
-
+    
+    # 検索実行ログを残す（infoレベル）
     await ctx.info(f"Google検索を実行: '{query}'")
 
     # 検索実施
-    try:
+    try: # エラー処理のため、tryで囲む
         # Google Custom Search APIの呼び出し
         service = build("customsearch", "v1", developerKey=API_KEY)
         resp = (
@@ -46,7 +47,7 @@ async def google_search(query: str, ctx: Context) -> str:
             .list(
                 q=query,
                 cx=CX_ID,
-                num=5,
+                num=5,  # 上位5件を返す
                 gl="jp",  # 日本からの検索
                 lr="lang_ja",  # 日本語優先
             )
@@ -56,7 +57,7 @@ async def google_search(query: str, ctx: Context) -> str:
     except HttpError as e:
         # Google APIのエラー処理
         if e.resp.status == 403:
-            await ctx.error("APIの利用制限エラー")
+            await ctx.error("APIの利用制限エラー") # errorレベルでロギング
             raise Exception("Google検索APIの利用制限に達しました。1日100回までの制限を超えた可能性があります。")
         else:
             await ctx.error(f"APIエラー: {str(e)}")
@@ -73,7 +74,7 @@ async def google_search(query: str, ctx: Context) -> str:
         return "検索結果が見つかりませんでした"
 
     cleaned = []
-    for rank, it in enumerate(items, 1):
+    for rank, it in enumerate(items, 1): # 取得された検索結果を整理する
         meta = (it.get("pagemap", {}).get("metatags") or [{}])[0]
         published = meta.get("article:published_time") or meta.get("og:updated_time")
 
@@ -88,7 +89,9 @@ async def google_search(query: str, ctx: Context) -> str:
             }
         )
 
+    # 検索結果についてもログを残す
     await ctx.info(f"検索完了: {len(cleaned)}件の結果")
+
     return str(cleaned)
 
 

@@ -37,7 +37,7 @@ TOOL_SEPARATOR = "__"  # unique separator to avoid name clashes across servers
 # ---------------------------------------------------------------------------
 
 RAW_CONFIG: Dict[str, dict] = {
-    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
     "google_search": {
         "command": "uv",
         "args": ["--directory", "/path/to/your/project/servers/src", "run", "server_google_search.py"],

@@ -1,10 +1,21 @@
-# Google検索AIエージェント
+# PythonではじめるMCP開発入門　書籍コードリポジトリ
+Google検索AIエージェント
 
-このプロジェクトは、Google検索APIを使用したAIエージェントのサンプルコードです。uvというPythonパッケージマネージャーを使って実行します。
+このプロジェクトは、PythonではじめるMCP開発入門のうち、4,5章に含まれるコードが格納されたリポジトリです。
+Google検索APIを使用したAIエージェントのサンプルコードです。uvというPythonパッケージマネージャーを使って実行します。
 
 ## プロジェクトの構成
 
-### ホスト（AIエージェント）
+### /chapter4_sample_code
+第4章のうち、MCPサーバー開発の実践編以外のサンプルコードをまとめたディレクトリです。
+
+### /servers
+第4章のMCPサーバー開発の実践編のコードをまとめたディレクトリです。
+1. **server_google_search.py**
+   * 公式google apiを使ったgoogle検索サーバ。google 検索の上位5個を返す
+
+### /host
+第5章の、MCPホスト開発の実践編のコードをまとめたディレクトリです。
 
 1. **agent_chat_with_google_search.py**
    * mcpサーバのfetchと、google searchを基に回答するcli基盤のチャット
@@ -12,19 +23,9 @@
 2. **agent_company_analyze.py**
    * 日本の企業を分析するAIエージェント。必要情報が揃うまでにループするので注意が必要。少しバグあり
 
-### MCPサーバー
-
-1. **server_google_search.py**
-   * 公式google apiを使ったgoogle検索サーバ。google 検索の上位5個を返す
-
-## 準備するもの
-
-1. Python 3.12以上
-2. uvパッケージマネージャー
-3. Google検索APIのキー
-4. OpenAI APIキー
 
 ## 環境構築の手順
+前提：Python 3.12以上の環境
 
 ### 1. uvのインストール
 
@@ -77,6 +78,8 @@ RAW_CONFIG: Dict[str, dict] = {
 **注意**: 実際に使用する際は、`/path/to/your/project/servers/src`の部分を、あなたの環境に合わせたパスに変更する必要があります。
 
 ## 実行方法
+
+### MCPホストのコード実行
 
 プロジェクトのルートディレクトリで以下のコマンドを実行します：
 

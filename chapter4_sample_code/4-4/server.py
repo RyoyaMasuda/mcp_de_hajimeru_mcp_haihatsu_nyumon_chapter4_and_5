@@ -12,6 +12,7 @@ async def call_weather_api(location: str) -> str:
 class SomeAPIClientError(Exception):
     pass
 
+# サンプルツール：指定された場所の天気を取得するツール
 @mcp.tool()
 async def get_weather(location: str) -> str:
     # location引数が英語で構成されているかを判定

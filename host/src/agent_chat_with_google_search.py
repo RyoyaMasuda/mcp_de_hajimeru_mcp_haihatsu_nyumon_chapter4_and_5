@@ -48,9 +48,10 @@ TOOL_SEPARATOR = "__"
 RAW_CONFIG: Dict[str, dict] = {
     "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
     "google_search": {
-        "command": "python",
+        "command": "uv",
         "args": [
-            r"D:\\SozoWorks\\book_code\\servers\\src\\server_google_saaearch.py",
+            "run",
+            r"path/to/your/server_google_search.py",  # <-- ご自身の環境に合わせて修正
         ],
     },
 }

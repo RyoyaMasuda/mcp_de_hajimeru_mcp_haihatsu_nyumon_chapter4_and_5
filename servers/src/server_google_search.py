@@ -1,35 +1,80 @@
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 import os
+# .envファイルから環境変数を読み込む
 from dotenv import load_dotenv
+load_dotenv()  # .envファイルから環境変数を読み込み
+API_KEY = os.getenv("GOOGLE_CSE_API_KEY")  # Google Custom Search APIキー
+CX_ID = os.getenv("GOOGLE_CSE_ID")  # 検索エンジンID
 
-
-load_dotenv()  # Load environment variables from .env file
-
-
-API_KEY = os.getenv("GOOGLE_CSE_API_KEY")  # or paste literal string
-CX_ID = os.getenv("GOOGLE_CSE_ID")  # your search-engine ID
-
-mcp = FastMCP(
-    "google_search_server",
-    instructions="google the given query, and return the first 5 results. treat the user as searching from japan, and perfer Japanese-language results.",
-)
+mcp = FastMCP("google_search_server")
 
 
 @mcp.tool()
-def google_search(query: str) -> list[dict]:
+async def google_search(query: str, ctx: Context) -> str:
     """
-    google the given query, and return the first 5 results. treat the user as searching from japan, and perfer Japanese-language results.
+    指定されたクエリでGoogle検索を行い、最初の5件の結果を返します。
+    日本からの検索として扱い、日本語の結果を優先します。
 
     Args:
-        query (str): The search query.
+        query (str): 検索クエリ
+        ctx (Context): ロギング用のMCPコンテキスト
     """
-    service = build("customsearch", "v1", developerKey=API_KEY)
-    resp = service.cse().list(q=query, cx=CX_ID, num=5, gl="jp", lr="lang_ja").execute()
-    items = resp.get("items", [])
-    cleaned = []
+    # 入力検証処理
 
-    for rank, it in enumerate(items, 1):
+    # 検索クエリが空の場合、エラーを返す
+    if not query or not query.strip():
+        raise ValueError("検索クエリを入力してください")
+
+    # 検索クエリが長すぎる場合、エラーを返す
+    if len(query) > 100:
+        raise ValueError("検索クエリは100文字以内で入力してください")
+
+    # API設定の確認
+    if not API_KEY or not CX_ID:
+        raise Exception("Google検索APIが設定されていません。環境変数を確認してください。")
+    
+    # 検索実行ログを残す（infoレベル）
+    await ctx.info(f"Google検索を実行: '{query}'")
+
+    # 検索実施
+    try: # エラー処理のため、tryで囲む
+        # Google Custom Search APIの呼び出し
+        service = build("customsearch", "v1", developerKey=API_KEY)
+        resp = (
+            service.cse()
+            .list(
+                q=query,
+                cx=CX_ID,
+                num=5,  # 上位5件を返す
+                gl="jp",  # 日本からの検索
+                lr="lang_ja",  # 日本語優先
+            )
+            .execute()
+        )
+
+    except HttpError as e:
+        # Google APIのエラー処理
+        if e.resp.status == 403:
+            await ctx.error("APIの利用制限エラー") # errorレベルでロギング
+            raise Exception("Google検索APIの利用制限に達しました。1日100回までの制限を超えた可能性があります。")
+        else:
+            await ctx.error(f"APIエラー: {str(e)}")
+            raise Exception("Google検索APIでエラーが発生しました。しばらく待ってから再試行してください。")
+
+    except Exception as e:
+        # その他のエラー（ネットワークエラーなど）
+        await ctx.error(f"検索エラー: {str(e)}")
+        raise Exception("検索中にエラーが発生しました。インターネット接続を確認してください。")
+
+    # 検索結果の処理
+    items = resp.get("items", [])
+    if not items:
+        return "検索結果が見つかりませんでした"
+
+    cleaned = []
+    for rank, it in enumerate(items, 1): # 取得された検索結果を整理する
         meta = (it.get("pagemap", {}).get("metatags") or [{}])[0]
         published = meta.get("article:published_time") or meta.get("og:updated_time")
 
@@ -40,9 +85,13 @@ def google_search(query: str) -> list[dict]:
                 "snippet": it["snippet"],
                 "url": it["link"],
                 "domain": it.get("displayLink"),
-                "published_at": published,  # may be None
+                "published_at": published,  # 公開日時（存在しない場合はNone）
             }
         )
+
+    # 検索結果についてもログを残す
+    await ctx.info(f"検索完了: {len(cleaned)}件の結果")
+
     return str(cleaned)
 
 

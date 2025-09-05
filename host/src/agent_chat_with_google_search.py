@@ -46,13 +46,10 @@ TOOL_SEPARATOR = "__"
 # ---------------------------------------------------------------------------
 
 RAW_CONFIG: Dict[str, dict] = {
-    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
     "google_search": {
         "command": "uv",
-        "args": [
-            "run",
-            r"path/to/your/server_google_search.py",  # <-- ご自身の環境に合わせて修正
-        ],
+        "args": ["--directory", "/path/to/your/project/servers/src", "run", "server_google_search.py"],
     },
 }
 
@@ -87,9 +84,7 @@ def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
     }
 
 
-async def init_servers(
-    stack: AsyncExitStack, servers: Dict[str, MCPServer]
-) -> List[dict]:
+async def init_servers(stack: AsyncExitStack, servers: Dict[str, MCPServer]) -> List[dict]:
     """Launch all MCP servers and aggregate their tools in OpenAI format."""
     openai_tools: List[dict] = []
 
@@ -123,9 +118,7 @@ async def init_servers(
     return openai_tools
 
 
-async def dispatch_tool_call(
-    tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]
-) -> str:
+async def dispatch_tool_call(tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]) -> str:
     """Execute the requested MCP tool and return its string output."""
     args = json.loads(tool_call.arguments)
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)

@@ -1,15 +1,3 @@
-"""mcp_openai_tutorial.py
-
-Tutorial script: calling external MCP tools (e.g. web‑fetch, Google search)
-from an OpenAI model via function‑calling.
-
-Run the script, then type questions.  The model will decide when to invoke a
-function; tool outputs are automatically routed back to the model until it
-responds with plain text.
-
-Usage -> ``python mcp_openai_tutorial.py``
-"""
-
 import asyncio
 import json
 import logging
@@ -32,34 +20,23 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-# --------------------------------
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
+# --- 定数 ---
 MODEL_NAME = "gpt-4.1"
 TOOL_SEPARATOR = "__"
 
-# ---------------------------------------------------------------------------
-# Raw server configuration (edit this to add/remove MCP servers)
-# ---------------------------------------------------------------------------
-
+# --- MCPサーバー設定 ---
 RAW_CONFIG: Dict[str, dict] = {
-"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
+    "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]},
     "google_search": {
         "command": "uv",
-        "args": ["--directory", "/path/to/your/project/servers/src", "run", "server_google_search.py"],
+        "args": ["--directory", "/path/to/your/project/servers/src", "run", "server_google_search.py"], # ご自身の環境に合わせて修正
     },
 }
 
-# ---------------------------------------------------------------------------
-# Typed configuration model
-# ---------------------------------------------------------------------------
-
 
 class MCPServer(BaseModel):
-    """Definition of a single MCP server instance."""
+    """単一のMCPサーバーインスタンスの定義。"""
 
     name: str
     command: str
@@ -68,13 +45,8 @@ class MCPServer(BaseModel):
     session: Any = None
 
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-
 def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
-    """Translate an MCP ``Tool`` into the schema expected by OpenAI."""
+    """MCP ``Tool``をOpenAIが期待するスキーマに変換する。"""
     unique_name = f"{server_name}{TOOL_SEPARATOR}{tool.name}"
     return {
         "type": "function",
@@ -84,8 +56,10 @@ def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
     }
 
 
-async def init_servers(stack: AsyncExitStack, servers: Dict[str, MCPServer]) -> List[dict]:
-    """Launch all MCP servers and aggregate their tools in OpenAI format."""
+async def init_servers(
+    stack: AsyncExitStack, servers: Dict[str, MCPServer]
+) -> List[dict]:
+    """すべてのMCPサーバーを起動し、それらのツールをOpenAI形式で集約する。"""
     openai_tools: List[dict] = []
 
     for server in servers.values():
@@ -118,8 +92,10 @@ async def init_servers(stack: AsyncExitStack, servers: Dict[str, MCPServer]) -> 
     return openai_tools
 
 
-async def dispatch_tool_call(tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]) -> str:
-    """Execute the requested MCP tool and return its string output."""
+async def dispatch_tool_call(
+    tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]
+) -> str:
+    """要求されたMCPツールを実行し、その文字列出力を返す。"""
     args = json.loads(tool_call.arguments)
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)
     session = servers[server_name].session
@@ -140,7 +116,7 @@ async def dispatch_tool_call(tool_call: ResponseFunctionToolCall, servers: Dict[
 
 
 async def chat_loop(servers: Dict[str, MCPServer]) -> None:
-    """Interactive REPL: forwards user input to the model and handles tool calls."""
+    """ユーザー入力をモデルに転送し、ツール呼び出しを処理する。"""
     load_dotenv()
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -149,50 +125,60 @@ async def chat_loop(servers: Dict[str, MCPServer]) -> None:
         previous_id: Optional[str] = None
 
         while True:
+            # ユーザーの入力。 "exit" または "quit" で終了。
             user_text = await asyncio.to_thread(input, "You: ")
             if user_text.strip().lower() in {"exit", "quit"}:
                 break
-
+            
+            # MCPツールをLLMに渡すための引数を準備
             call_kwargs = {
                 "model": MODEL_NAME,
                 "input": [{"role": "user", "content": user_text}],
                 "tools": tools,
             }
+
+            # OpenAIのresponses APIを使用
             if previous_id:
                 call_kwargs["previous_response_id"] = previous_id
-
+            
+            # 初期のリクエストを送信
             response: Response = client.responses.create(**call_kwargs)
 
-            # Handle tool chains until we get plain‑text output
-            while isinstance(response.output[0], ResponseFunctionToolCall):
-                tool_call = response.output[0]
-                tool_output = await dispatch_tool_call(tool_call, servers)
-
-                response = client.responses.create(
-                    model=MODEL_NAME,
-                    previous_response_id=response.id,
-                    input=[
+            # LLMがツール呼び出しを行う場合、それらを処理して結果を再送信
+            while any(
+                (item.type == "function_call") for item in response.output
+            ):
+                # MCPツールを呼び出し、その出力を収集
+                # 複数回のツール呼び出しに対応
+                tool_outputs = []
+                for tool_call in response.output:
+                    if tool_call.type != "function_call":
+                        continue
+                    
+                    tool_output = await dispatch_tool_call(tool_call, servers)
+                    tool_outputs.append(
                         {
                             "type": "function_call_output",
                             "call_id": tool_call.call_id,
                             "output": tool_output,
                         }
-                    ],
+                    )
+
+                logger.info(f"Submitting tool outputs: {len(tool_outputs)}")
+                response = client.responses.create(
+                    model=MODEL_NAME,
+                    previous_response_id=response.id,
+                    input=tool_outputs,
                     tools=tools,
                 )
+                logger.info(f"Model response: {response}")
 
-            assistant_message = response.output[0].content[0].text
             previous_id = response.id
-            print(f"Assistant: {assistant_message}\n")
-
-
-# ---------------------------------------------------------------------------
-# Entry point helpers
-# ---------------------------------------------------------------------------
+            print(f"Assistant: {response.output_text}\n")
 
 
 def build_servers(raw: Dict[str, dict]) -> Dict[str, MCPServer]:
-    """Convert the raw dict into typed ``MCPServer`` objects."""
+    """RAW_CONFIGを``MCPServer``オブジェクトに変換する。"""
     return {name: MCPServer(name=name, **cfg) for name, cfg in raw.items()}
 
 

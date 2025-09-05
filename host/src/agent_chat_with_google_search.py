@@ -14,6 +14,10 @@ from mcp import ClientSession, McpError, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import Tool
 
+# --- APIキーを.envファイルから読み込む ---
+load_dotenv()
+API_KEY = os.getenv("OPENAI_API_KEY")
+
 # --- ロギング設定を追加 ---
 logging.basicConfig(
     level=logging.INFO,
@@ -46,7 +50,7 @@ class MCPServer(BaseModel):
 
 
 def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
-    """MCP ``Tool``をOpenAIが期待するスキーマに変換する。"""
+    """MCPのToolオブジェクトをOpenAIのFunction Callingスキーマに変換する。"""
     unique_name = f"{server_name}{TOOL_SEPARATOR}{tool.name}"
     return {
         "type": "function",
@@ -59,7 +63,7 @@ def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
 async def init_servers(
     stack: AsyncExitStack, servers: Dict[str, MCPServer]
 ) -> List[dict]:
-    """すべてのMCPサーバーを起動し、それらのツールをOpenAI形式で集約する。"""
+    """初期化部：設定された全MCPサーバーを起動し、利用可能なツールを収集する。"""
     openai_tools: List[dict] = []
 
     for server in servers.values():
@@ -83,7 +87,7 @@ async def init_servers(
             for t in response.tools:
                 openai_tools.append(mcp_tool_to_openai_tool(t, server.name))
 
-        # --- ▼ 3.4節 パターンBのエラー処理 ▼ ---
+        # --- 3.4節 パターンBのエラー処理 ---
         except McpError as e:
             logger.error(
                 f"MCP Error on server '{server.name}': {e.error.message} (Code: {e.error.code})"
@@ -95,7 +99,7 @@ async def init_servers(
 async def dispatch_tool_call(
     tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]
 ) -> str:
-    """要求されたMCPツールを実行し、その文字列出力を返す。"""
+    """LLMのツール呼び出し指示を解釈し、対応するMCPツールを実行する。"""
     args = json.loads(tool_call.arguments)
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)
     session = servers[server_name].session
@@ -103,7 +107,6 @@ async def dispatch_tool_call(
     logger.info(f"Calling tool '{tool_name}' on server '{server_name}'")
     result = await session.call_tool(name=tool_name, arguments=args)
 
-    # --- 3.4節 パターンAのエラー処理 ---
     if result.isError:
         error_content = (
             result.content[0].text if result.content else "Unknown tool error"
@@ -116,9 +119,8 @@ async def dispatch_tool_call(
 
 
 async def chat_loop(servers: Dict[str, MCPServer]) -> None:
-    """ユーザー入力をモデルに転送し、ツール呼び出しを処理する。"""
-    load_dotenv()
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    """対話制御部：ユーザーとの対話ループを管理し、LLMとMCPサーバーを連携される。"""
+    client = OpenAI(api_key=API_KEY)
 
     async with AsyncExitStack() as stack:
         tools = await init_servers(stack, servers)
@@ -137,7 +139,7 @@ async def chat_loop(servers: Dict[str, MCPServer]) -> None:
                 "tools": tools,
             }
 
-            # OpenAIのresponses APIを使用
+            # OpenAIのresponses APIではprevious_idでチャット履歴を管理できる
             if previous_id:
                 call_kwargs["previous_response_id"] = previous_id
             
@@ -178,7 +180,7 @@ async def chat_loop(servers: Dict[str, MCPServer]) -> None:
 
 
 def build_servers(raw: Dict[str, dict]) -> Dict[str, MCPServer]:
-    """RAW_CONFIGを``MCPServer``オブジェクトに変換する。"""
+    """RAW_CONFIGからMCPServerオブジェクトを構築する。"""
     return {name: MCPServer(name=name, **cfg) for name, cfg in raw.items()}
 
 

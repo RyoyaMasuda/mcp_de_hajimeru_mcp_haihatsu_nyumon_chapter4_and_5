@@ -10,7 +10,6 @@ import os
 from contextlib import AsyncExitStack
 # 型ヒントを定義するためのライブラリをインポートします。コードの可読性と保守性を高めます。
 from typing import Dict, List, Optional, Any
-
 # .envファイルから環境変数を読み込むためのライブラリをインポートします。APIキーなどを安全に管理できます。
 from dotenv import load_dotenv
 # OpenAIのAPIと対話するためのライブラリをインポートします。
@@ -19,7 +18,6 @@ from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 # データモデルを定義するためのライブラリをインポートします。データのバリデーション（検証）などに使います。
 from pydantic import BaseModel
-
 # MCP (Model Context Protocol) クライアントセッション、エラー、標準入出力サーバーパラメータをインポートします。
 # これらはLLMがツールと通信するための基盤となります。
 from mcp import ClientSession, McpError, StdioServerParameters
@@ -28,14 +26,16 @@ from mcp.client.stdio import stdio_client
 # MCPのツールの型定義をインポートします。
 from mcp.types import Tool
 
-# --- APIキーを.envファイルから読み込む ---
 # .envファイルから環境変数を読み込みます。
 # これにより、APIキーなどの機密情報をコードに直接書き込まずに済みます。
 load_dotenv()
 # OpenAI APIキーを環境変数から取得します。
 API_KEY = os.getenv("OPENAI_API_KEY")
+# 使用するLLM（大規模言語モデル）のモデル名を定義します。
+MODEL_NAME = "gpt-4.1"
+# サーバー名とツール名を区切るための文字列を定義します。
+TOOL_SEPARATOR = "__"
 
-# --- ロギング設定を追加 ---
 # ロギング設定を行います。
 # level=logging.INFO: 情報レベル以上のメッセージをログに出力します。
 # format: ログメッセージの表示形式を定義します。
@@ -46,13 +46,6 @@ logging.basicConfig(
 # ロガーインスタンスを作成します。これを使ってログメッセージを出力します。
 logger = logging.getLogger(__name__)
 
-# --- 定数 ---
-# 使用するLLM（大規模言語モデル）のモデル名を定義します。
-MODEL_NAME = "gpt-4.1"
-# サーバー名とツール名を区切るための文字列を定義します。
-TOOL_SEPARATOR = "__"
-
-# --- MCPサーバー設定 ---
 # MCPサーバーの設定を辞書形式で定義します。
 # 各サーバーは、実行コマンドと引数を持っています。
 RAW_CONFIG: Dict[str, dict] = {
@@ -61,7 +54,7 @@ RAW_CONFIG: Dict[str, dict] = {
     # 'google_search' サーバーの設定
     "google_search": {
         "command": "uv", # 実行するコマンド
-        "args": [
+        "args": [ # コマンドに渡す引数
             "--directory", # サーバーのディレクトリを指定するオプション
             "/home/ryoyamasuda/Documents/mcp_de_hajimeru_mcp_haihatsu_nyumon_chapter4_and_5/servers/src", # Google検索サーバーのソースコードがあるディレクトリ
             "run", # uvコマンドのサブコマンド
@@ -69,7 +62,6 @@ RAW_CONFIG: Dict[str, dict] = {
         ], # ご自身の環境に合わせて修正（ここは特に重要です！）
     },
 }
-
 
 # MCPサーバーの情報を保持するためのPydanticモデルを定義します。
 # これにより、サーバーの設定を構造化して扱えます。
@@ -82,7 +74,6 @@ class MCPServer(BaseModel):
     env: Optional[Dict[str, str]] = None # サーバーに渡す環境変数（オプション）
     session: Any = None # MCPクライアントセッションオブジェクト（実行時に設定されます）
 
-
 def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
     """MCPのToolオブジェクトをOpenAIのFunction Callingスキーマに変換する。
     LLMがMCPツールを呼び出せるように、OpenAIが理解できる形式に変換します。
@@ -91,15 +82,14 @@ def mcp_tool_to_openai_tool(tool: Tool, server_name: str) -> dict:
     unique_name = f"{server_name}{TOOL_SEPARATOR}{tool.name}"
     return {
         "type": "function",
-        "name": unique_name, # OpenAIに渡すツール名
-        "description": tool.description, # ツールの説明（LLMがいつ使うべきかを判断するのに役立ちます）
-        "parameters": tool.inputSchema, # ツールの入力パラメータのスキーマ
+        "function": {
+            "name": unique_name, # OpenAIに渡すツール名
+            "description": tool.description, # ツールの説明（LLMがいつ使うべきかを判断するのに役立ちます）
+            "parameters": tool.schema, # ツールの入力パラメータのスキーマ
+        },
     }
 
-
-async def init_servers(
-    stack: AsyncExitStack, servers: Dict[str, MCPServer]
-) -> List[dict]:
+async def init_servers(stack: AsyncExitStack, servers: Dict[str, MCPServer]) -> List[dict]:
     """初期化部：設定された全MCPサーバーを起動し、利用可能なツールを収集する。
     この関数は、MCPサーバーを起動し、それぞれのサーバーが提供するツールをOpenAI形式に変換して返します。
     """
@@ -134,109 +124,69 @@ async def init_servers(
             for t in response.tools:
                 openai_tools.append(mcp_tool_to_openai_tool(t, server.name))
 
-        # --- 3.4節 パターンBのエラー処理 ---
-        # MCPサーバーでエラーが発生した場合の処理
+        # MCPサーバーでエラーが発生した場合の処理（3.4節 パターンBのエラー処理）
         except McpError as e:
             # エラーメッセージをログに出力します。
             logger.error(
                 f"MCP Error on server '{server.name}': {e.error.message} (Code: {e.error.code})"
             )
-
     return openai_tools
 
-
 async def dispatch_tool_call(
-    tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]
-) -> str:
+    tool_call: ResponseFunctionToolCall, servers: Dict[str, MCPServer]) -> str:
     """LLMのツール呼び出し指示を解釈し、対応するMCPツールを実行する。
     LLMが特定のツールを呼び出すように指示した場合、この関数がそのツールを実際に実行します。
     """
-    # LLMから渡された引数をJSON形式からPythonの辞書に変換します。
+    
     args = json.loads(tool_call.arguments)
-    # ツール名からサーバー名と実際のツール名を分離します。
     server_name, tool_name = tool_call.name.split(TOOL_SEPARATOR)
-    # 対応するサーバーのセッションを取得します。
     session = servers[server_name].session
 
-    # ログにどのツールが呼び出されているかを出力します。
     logger.info(f"Calling tool '{tool_name}' on server '{server_name}'")
-    # MCPツールを呼び出し、その結果を取得します。
     result = await session.call_tool(name=tool_name, arguments=args)
-
-    # ツール実行結果がエラーだった場合
+    
     if result.isError:
-        # エラーメッセージを取得します。
-        error_content = (
-            result.content[0].text if result.content else "Unknown tool error"
-        )
-        # 警告ログを出力し、エラーメッセージを返します。
+        error_content = (result.content[0].text if result.content else "Unknown tool error")
         logger.warning(f"Tool '{tool_name}' returned an error: {error_content}")
         return f"Tool Error: {error_content}"
 
-    # ツールが正常に実行された場合
     logger.info(f"Tool '{tool_name}' executed successfully.")
-    # ツールの実行結果を文字列として返します。
     return str(result.content[0].text)
-
 
 async def chat_loop(servers: Dict[str, MCPServer]) -> None:
     """対話制御部：ユーザーとの対話ループを管理し、LLMとMCPサーバーを連携される。
     この関数は、ユーザーからの入力を受け取り、LLMに渡して応答を生成し、
     必要に応じてMCPツールを呼び出す一連の処理を管理します。
     """
-    # OpenAIクライアントを初期化します。APIキーを使ってOpenAIサービスと通信します。
     client = OpenAI(api_key=API_KEY)
 
-    # AsyncExitStackを使って、サーバーのライフサイクル（起動・停止）を管理します。
     async with AsyncExitStack() as stack:
-        # MCPサーバーを初期化し、利用可能なツールをOpenAI形式で取得します。
         tools = await init_servers(stack, servers)
-        # 以前の応答IDを保持するための変数。チャット履歴を管理するために使います。
         previous_id: Optional[str] = None
 
-        # 無限ループでユーザーとの対話を続けます。
         while True:
-            # ユーザーからの入力を受け取ります。
             user_text = await asyncio.to_thread(input, "You: ")
-            # ユーザーが "exit" または "quit" と入力したらループを終了します。
             if user_text.strip().lower() in {"exit", "quit"}:
                 break
             
-            # LLMに渡すための引数を準備します。
             call_kwargs = {
-                "model": MODEL_NAME, # 使用するLLMのモデル名
-                "input": [{"role": "user", "content": user_text}], # ユーザーの入力メッセージ
-                "tools": tools, # LLMが利用できるツール群
+                "model": MODEL_NAME,
+                "input": [{"role": "user", "content": user_text}],
+                "tools": tools,
             }
 
-            # OpenAIのresponses APIではprevious_idでチャット履歴を管理できる
-            # 以前の応答IDがあれば、チャット履歴として渡します。
             if previous_id:
                 call_kwargs["previous_response_id"] = previous_id
-            
-            # 初期のリクエストを送信
-            # OpenAIに初期のリクエストを送信し、LLMからの応答を取得します。
-            response: Response = client.responses.create(**call_kwargs)
 
-            # LLMがツール呼び出しを行う場合、それらを処理して結果を再送信
-            # ツール呼び出しがある限りループを続けます。
-            # previous_idで管理するため以前の会話履歴にfunction_callがあったとしても
-            # 今回は今回のみのresponseにfunction_callがあるか確認できるようになっている。
-            while any(
-                (item.type == "function_call") for item in response.output
-            ):
-                # MCPツールを呼び出し、その出力を収集
-                # 複数のツール呼び出しに対応するため、ツール出力のリストを初期化します。
+            response: Response = client.response.create(**call_kwargs)
+
+            while any(item.type == "function_call" for item in response.output):
                 tool_outputs = []
-                # LLMからの応答に含まれる各出力項目を処理します。
                 for tool_call in response.output:
-                    # function_callタイプでなければスキップします。
                     if tool_call.type != "function_call":
                         continue
-                    
-                    # ツール呼び出しをディスパッチ（実行）し、その結果を取得します。
+
                     tool_output = await dispatch_tool_call(tool_call, servers)
-                    # ツール実行結果をOpenAIに渡す形式でリストに追加します。
                     tool_outputs.append(
                         {
                             "type": "function_call_output",
@@ -245,40 +195,34 @@ async def chat_loop(servers: Dict[str, MCPServer]) -> None:
                         }
                     )
 
-                # ツール出力をログに出力します。
                 logger.info(f"Submitting tool outputs: {len(tool_outputs)}")
-                # ツール実行結果をLLMに再送信し、次の応答を取得します。
                 response = client.responses.create(
                     model=MODEL_NAME,
                     previous_response_id=response.id,
                     input=tool_outputs,
                     tools=tools,
                 )
-                # LLMの応答をログに出力します。
+
                 logger.info(f"Model response: {response}")
 
-            # 現在の応答IDを次のターンのために保存します。
+            
             previous_id = response.id
-            # LLMからの最終的なテキスト応答をユーザーに表示します。
             print(f"Assistant: {response.output_text}\n")
 
-
-def build_servers(raw: Dict[str, dict]) -> Dict[str, MCPServer]:
-    """RAW_CONFIGからMCPServerオブジェクトを構築する。
-    定義されたRAW_CONFIG辞書から、MCPServerクラスのインスタンスを作成します。
+def build_servers() -> Dict[str, MCPServer]:
+    """MCPサーバーを構築する。
     """
-    # 辞書内包表記を使って、各サーバー設定からMCPServerオブジェクトを作成します。
-    return {name: MCPServer(name=name, **cfg) for name, cfg in raw.items()}
-
+    return {
+        name: MCPServer(**config)
+        for name, config in RAW_CONFIG.items()
+    }
 
 def main() -> None:
-    """メイン関数：プログラムのエントリーポイント。"""
-    # サーバー設定を基にMCPServerオブジェクトを構築します。
-    servers = build_servers(RAW_CONFIG)
-    # 非同期チャットループを実行します。
+    """メイン関数：プログラムのエントリーポイント。
+    MCPサーバーを初期化し、ユーザーとの対話ループを開始します。
+    """
+    servers = build_servers()
     asyncio.run(chat_loop(servers))
 
-
-# このスクリプトが直接実行された場合にmain関数を呼び出します。
 if __name__ == "__main__":
     main()
